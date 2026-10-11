@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pagamento — Flash Despachante</title>
+<style>
+:root{
+  --bg:#070806;--panel:#10110e;--panel2:#151611;--yellow:#ffc400;
+  --text:#f5f5f0;--muted:#999b91;--line:#38330b;--ok:#20c875;--bad:#ff5a5f;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+  background:
+    radial-gradient(circle at 50% 0%,rgba(255,196,0,.08),transparent 35%),
+    var(--bg);
+  color:var(--text);font-family:Arial,Helvetica,sans-serif;
+}
+.card{
+  width:min(560px,100%);background:linear-gradient(180deg,var(--panel2),var(--panel));
+  border:1px solid var(--line);border-radius:18px;padding:32px;
+  box-shadow:0 24px 80px rgba(0,0,0,.45);
+}
+.brand{font-weight:900;letter-spacing:.08em;color:var(--yellow);font-size:14px;margin-bottom:28px}
+.icon{
+  width:58px;height:58px;border-radius:50%;display:grid;place-items:center;
+  margin-bottom:22px;font-size:28px;font-weight:900;background:rgba(255,196,0,.1);
+  border:1px solid rgba(255,196,0,.35);color:var(--yellow);
+}
+h1{font-size:28px;line-height:1.1;margin:0 0 12px}
+p{color:var(--muted);line-height:1.6;margin:0 0 18px}
+.status{
+  margin:22px 0;padding:16px;border-radius:12px;background:#090a08;
+  border:1px solid #292a24;color:#ddd;
+}
+.status strong{display:block;color:#fff;margin-bottom:5px}
+.actions{display:grid;gap:10px;margin-top:24px}
+.btn{
+  display:block;text-align:center;text-decoration:none;border:0;border-radius:11px;
+  padding:15px 18px;font-weight:900;font-size:13px;letter-spacing:.03em;cursor:pointer;
+}
+.primary{background:var(--yellow);color:#090909}
+.secondary{background:transparent;color:#eee;border:1px solid #3b3c35}
+.small{font-size:12px;color:#74766e;margin-top:18px}
+.spinner{
+  width:20px;height:20px;border:2px solid #555;border-top-color:var(--yellow);
+  border-radius:50%;display:inline-block;vertical-align:-5px;margin-right:8px;
+  animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spinner{animation:none}}
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="brand">FLASH DESPACHANTE</div>
+  <div class="icon" id="icon">✓</div>
+  <h1 id="title">Confirmando seu pagamento</h1>
+  <p id="description">Recebemos o retorno do Mercado Pago. Estamos validando a transação antes de prosseguir com o serviço.</p>
+  <div class="status" id="status">
+    <strong><span class="spinner"></span>Verificando pagamento...</strong>
+    Isso normalmente leva apenas alguns segundos.
+  </div>
+  <div class="actions">
+    <a class="btn primary" id="home" href="/" style="display:none">Voltar para a Flash</a>
+  </div>
+  <div class="small">Não feche esta página enquanto a confirmação estiver em andamento.</div>
+</main>
+<script>
+const CONFIRM_URL = 'https://n8n.expressconsulta.com.br/webhook/confirmar-pagamento';
+const params = new URLSearchParams(location.search);
+const paymentId = params.get('payment_id') || params.get('collection_id') || params.get('paymentId');
+const mpStatus = params.get('status') || params.get('collection_status') || '';
+
+const title = document.getElementById('title');
+const description = document.getElementById('description');
+const statusBox = document.getElementById('status');
+const home = document.getElementById('home');
+const icon = document.getElementById('icon');
+
+function finish(titleText, descriptionText, statusText, symbol='✓') {
+  title.textContent = titleText;
+  description.textContent = descriptionText;
+  statusBox.innerHTML = '<strong>' + statusText + '</strong>';
+  icon.textContent = symbol;
+  home.style.display = 'block';
+}
+
+async function confirmar() {
+  if (!paymentId) {
+    finish(
+      'Retorno recebido',
+      'O Mercado Pago não informou o identificador do pagamento nesta URL. O processamento automático do pagamento continua pelo backend.',
+      'Você pode voltar para a Flash.',
+      '!'
+    );
+    return;
+  }
+
+  try {
+    const response = await fetch(CONFIRM_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        payment_id: paymentId,
+        collection_id: paymentId,
+        status: mpStatus,
+        type: 'payment',
+        data: { id: paymentId }
+      })
+    });
+
+    const raw = await response.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch { data = { message: raw }; }
+
+    if (!response.ok) throw new Error(data.message || 'Falha ao confirmar o pagamento.');
+
+    const normalized = Array.isArray(data) ? (data[0] || {}) : (data.data || data.result || data);
+    const returnedStatus = String(normalized.status || normalized.payment_status || mpStatus || '').toLowerCase();
+
+    if (returnedStatus === 'rejected' || returnedStatus === 'cancelled') {
+      location.replace('/pagamento-falhou.html');
+      return;
+    }
+    if (returnedStatus === 'pending' || returnedStatus === 'in_process') {
+      location.replace('/pagamento-pendente.html');
+      return;
+    }
+
+    finish(
+      'Pagamento recebido',
+      'A confirmação foi enviada com sucesso. Seu pedido seguirá agora pelo fluxo automático do serviço contratado.',
+      'Pagamento encaminhado para processamento.'
+    );
+  } catch (err) {
+    finish(
+      'Pagamento recebido',
+      'Não conseguimos consultar a confirmação pela página neste momento. O Mercado Pago também notifica o nosso sistema diretamente.',
+      'Seu pedido continua sendo processado. Evite realizar um novo pagamento.',
+      '!'
+    );
+  }
+}
+
+confirmar();
+</script>
+</body>
+</html>
